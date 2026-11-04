@@ -1,10 +1,8 @@
-// controllers/uploadController.js
-
 import XLSX from "xlsx";
 import db from "../../config/db.js";
+import fs from "fs/promises";
 
-// Normalize Excel headings so differences in casing, spaces and line breaks
-// do not prevent matching.
+// Normalize Excel headings: casing, spaces, punctuation and line breaks.
 const normalizeHeader = (value = "") =>
     String(value)
         .toLowerCase()
@@ -12,59 +10,7 @@ const normalizeHeader = (value = "") =>
         .replace(/[^a-z0-9]/g, "")
         .trim();
 
-// Convert Excel date values into MySQL DATE format.
-// const formatExcelDate = (value) => {
-//     if (value === null || value === undefined || value === "") {
-//         return null;
-//     }
-
-//     // Excel date stored as a numeric serial.
-//     if (typeof value === "number") {
-//         const parsed = XLSX.SSF.parse_date_code(value);
-
-//         if (!parsed) return null;
-
-//         const month = String(parsed.m).padStart(2, "0");
-//         const day = String(parsed.d).padStart(2, "0");
-
-//         return `${parsed.y}-${month}-${day}`;
-//     }
-
-//     // JavaScript Date object.
-//     if (value instanceof Date && !Number.isNaN(value.getTime())) {
-//         const year = value.getFullYear();
-//         const month = String(value.getMonth() + 1).padStart(2, "0");
-//         const day = String(value.getDate()).padStart(2, "0");
-
-//         return `${year}-${month}-${day}`;
-//     }
-
-//     // Text date: try common formats.
-//     const text = String(value).trim();
-
-//     if (!text) return null;
-
-//     // DD/MM/YYYY or DD-MM-YYYY
-//     const dmyMatch = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
-
-//     if (dmyMatch) {
-//         const [, day, month, year] = dmyMatch;
-
-//         return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
-//     }
-
-//     // YYYY-MM-DD
-//     const ymdMatch = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-
-//     if (ymdMatch) {
-//         const [, year, month, day] = ymdMatch;
-
-//         return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
-//     }
-
-//     return null;
-// };
-// Validate date and return MySQL DATE format: YYYY-MM-DD
+// Validate a date and return MySQL DATE format.
 const buildValidDate = (year, month, day) => {
     year = Number(year);
     month = Number(month);
@@ -85,9 +31,7 @@ const buildValidDate = (year, month, day) => {
 
     const daysInMonth = new Date(year, month, 0).getDate();
 
-    if (day > daysInMonth) {
-        return null;
-    }
+    if (day > daysInMonth) return null;
 
     return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 };
@@ -99,7 +43,7 @@ const formatExcelDate = (value) => {
             return null;
         }
 
-        // Excel numeric serial date
+        // Excel numeric serial date.
         if (typeof value === "number") {
             const parsed = XLSX.SSF.parse_date_code(value);
 
@@ -108,7 +52,7 @@ const formatExcelDate = (value) => {
             return buildValidDate(parsed.y, parsed.m, parsed.d);
         }
 
-        // JavaScript Date object
+        // JavaScript Date object.
         if (value instanceof Date) {
             if (Number.isNaN(value.getTime())) return null;
 
@@ -123,37 +67,32 @@ const formatExcelDate = (value) => {
 
         if (!text) return null;
 
-        // DD-MM-YYYY or DD/MM/YYYY or DD.MM.YYYY
-        // Also supports single digit day/month: D-M-YYYY
+        // DD-MM-YYYY, DD/MM/YYYY or DD.MM.YYYY.
         const dmyMatch = text.match(
             /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/
         );
 
         if (dmyMatch) {
             const [, day, month, year] = dmyMatch;
-
             return buildValidDate(year, month, day);
         }
 
-        // YYYY-MM-DD or YYYY/MM/DD
+        // YYYY-MM-DD or YYYY/MM/DD.
         const ymdMatch = text.match(
             /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/
         );
 
         if (ymdMatch) {
             const [, year, month, day] = ymdMatch;
-
             return buildValidDate(year, month, day);
         }
 
-        // Unsupported or invalid format
         return null;
-
     } catch (error) {
-        // Never allow an invalid Excel date to crash the import.
         return null;
     }
 };
+
 const cleanValue = (value) => {
     if (value === null || value === undefined) return null;
 
@@ -162,11 +101,10 @@ const cleanValue = (value) => {
     return text === "" ? null : text;
 };
 
-// Find a column by possible heading names.
-// occurrence is useful for duplicate headings such as Home District.
+// Find a column by heading aliases.
+// occurrence handles duplicate headings such as Home District.
 const findColumnIndex = (headers, aliases, occurrence = 0) => {
     const normalizedAliases = aliases.map(normalizeHeader);
-
     const matchingIndexes = [];
 
     headers.forEach((header, index) => {
@@ -187,7 +125,9 @@ const getCellValue = (row, headers, aliases, occurrence = 0) => {
 };
 
 const uploadPersonnelExcel = async (req, res, next) => {
-    const connection = await db.getConnection();
+    let connection = null;
+    let transactionStarted = false;
+    let importSucceeded = false;
 
     try {
         if (!req.file) {
@@ -197,12 +137,7 @@ const uploadPersonnelExcel = async (req, res, next) => {
             });
         }
 
-        const allowedMimeTypes = [
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "application/vnd.ms-excel",
-            "application/octet-stream",
-        ];
-
+        // Validate file extension.
         const extension = req.file.originalname
             .split(".")
             .pop()
@@ -215,9 +150,11 @@ const uploadPersonnelExcel = async (req, res, next) => {
             });
         }
 
+        // Read the uploaded file from uploads/admin.
         const workbook = XLSX.readFile(req.file.path, {
-    cellDates: true,
-});
+            cellDates: true,
+        });
+
         const sheetName = workbook.SheetNames[0];
 
         if (!sheetName) {
@@ -229,7 +166,7 @@ const uploadPersonnelExcel = async (req, res, next) => {
 
         const worksheet = workbook.Sheets[sheetName];
 
-        // Use header: 1 to preserve duplicate column headings.
+        // Matrix format preserves duplicate Home District headings.
         const rows = XLSX.utils.sheet_to_json(worksheet, {
             header: 1,
             defval: null,
@@ -246,12 +183,12 @@ const uploadPersonnelExcel = async (req, res, next) => {
 
         const headers = rows[0];
 
-        // Check that the important columns exist.
+        // Validate required Name column.
         const nameColumn = findColumnIndex(headers, [
-    "Name",
-    "Name of the RC/LRC",
-    "Name of RC/LRC",
-]);
+            "Name",
+            "Name of the RC/LRC",
+            "Name of RC/LRC",
+        ]);
 
         if (nameColumn === -1) {
             return res.status(400).json({
@@ -265,7 +202,10 @@ const uploadPersonnelExcel = async (req, res, next) => {
         let importedRows = 0;
         let skippedRows = 0;
 
+        connection = await db.getConnection();
+
         await connection.beginTransaction();
+        transactionStarted = true;
 
         const insertQuery = `
             INSERT INTO personnel (
@@ -290,35 +230,40 @@ const uploadPersonnelExcel = async (req, res, next) => {
                 caste,
                 exempted_category,
                 driving_licence,
+                driving_licence_details,
                 computer_knowledge,
                 extracurricular_activities,
                 mobile_no,
                 remarks,
                 legacy_leave_details
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
         `;
 
         for (let index = 0; index < personnelRows.length; index++) {
             const row = personnelRows[index];
 
+            // Ignore completely empty rows.
             if (!row || row.every((cell) => cleanValue(cell) === null)) {
                 skippedRows++;
                 continue;
             }
 
-           const name = getCellValue(row, headers, [
-    "Name",
-    "Name of the RC/LRC",
-    "Name of RC/LRC",
-]);
+            const name = getCellValue(row, headers, [
+                "Name",
+                "Name of the RC/LRC",
+                "Name of RC/LRC",
+            ]);
 
-            // Name is required in your personnel table.
             if (!name) {
                 skippedRows++;
                 continue;
             }
 
+            // Serial number.
             const serialValue = getCellValue(row, headers, [
                 "Sl No",
                 "Serial No",
@@ -330,10 +275,12 @@ const uploadPersonnelExcel = async (req, res, next) => {
                 ? Number.parseInt(serialValue, 10)
                 : null;
 
+            // Date of birth.
             const dobColumn = findColumnIndex(headers, [
                 "Date of Birth",
                 "DOB",
                 "D.O.B",
+                "Date of Birth (DD/MM/YYYY)",
             ]);
 
             const dateOfBirth =
@@ -344,23 +291,31 @@ const uploadPersonnelExcel = async (req, res, next) => {
             const values = [
                 Number.isInteger(serialNo) ? serialNo : null,
 
+                // PTS Chest No.
                 getCellValue(row, headers, [
                     "PTS Chest No",
                     "PTS Chest Number",
                     "Chest No",
                 ]),
 
+                // SVSPA Allotted RC/LRC No.
                 getCellValue(row, headers, [
+                    "SVSPA Allotted RC/LRC No",
                     "SVSPA RC/LRC No",
                     "SVSPA RC LRC No",
                     "RC/LRC No",
                     "RC LRC No",
                 ]),
 
-                getCellValue(row, headers, ["WBP ID", "WBP ID No"]),
+                // WBP ID.
+                getCellValue(row, headers, [
+                    "WBP ID",
+                    "WBP ID No",
+                ]),
 
                 name,
 
+                // Father's Name.
                 getCellValue(row, headers, [
                     "Father Name",
                     "Father's Name",
@@ -369,59 +324,96 @@ const uploadPersonnelExcel = async (req, res, next) => {
 
                 dateOfBirth,
 
-                getCellValue(row, headers, ["Marital Status"]),
+                getCellValue(row, headers, [
+                    "Marital Status",
+                ]),
 
+                // Village / City.
                 getCellValue(row, headers, [
                     "Village/City",
                     "Village City",
+                    "Vill/City",
                     "Village",
                 ]),
 
-                getCellValue(row, headers, ["Post Office", "PO"]),
+                getCellValue(row, headers, [
+                    "Post Office",
+                    "PO",
+                ]),
 
+                // Present/local Police Station.
                 getCellValue(row, headers, [
                     "Police Station",
                     "P.S.",
                     "PS",
                 ]),
 
-                getCellValue(row, headers, ["PIN Code", "Pin", "PIN"]),
+                getCellValue(row, headers, [
+                    "PIN Code",
+                    "Pin",
+                    "PIN",
+                ]),
 
-                // First Home District heading.
-                getCellValue(row, headers, ["Home District"], 0),
+                // Use the SECOND Home District column.
+                getCellValue(row, headers, [
+                    "Home District",
+                ], 1),
 
-                // Second duplicate Home District heading.
-                // This is mapped to home_police_station in the agreed schema.
-                getCellValue(row, headers, ["Home District"], 1),
+                // Separate Home Police Station column.
+                getCellValue(row, headers, [
+                    "Home Police Station",
+                ]),
 
+                // Recruited Unit.
                 getCellValue(row, headers, [
                     "Recruited Unit",
                     "Unit of Recruitment",
+                    "Name of the Dist/Unit from where Recruited/Appointed",
                 ]),
 
+                // Salary Drawing Unit.
                 getCellValue(row, headers, [
                     "Salary Drawing Unit",
                     "Salary Drawn Unit",
+                    "Name of the Dist/Unit from where Salary is being drawn",
                 ]),
 
-                getCellValue(row, headers, ["Education", "Educational Qualification"]),
+                getCellValue(row, headers, [
+                    "Education",
+                    "Educational Qualification",
+                ]),
 
-                getCellValue(row, headers, ["Religion"]),
+                getCellValue(row, headers, [
+                    "Religion",
+                ]),
 
-                getCellValue(row, headers, ["Caste"]),
+                getCellValue(row, headers, [
+                    "Caste",
+                ]),
 
                 getCellValue(row, headers, [
                     "Exempted Category",
-                    "Exempted Category (if any)",
+                    "Exampted Category (Yes/No)",
+                    "Exempted Category (Yes/No)",
                 ]),
 
+                // Driving Licence Yes/No.
                 getCellValue(row, headers, [
-                    "Driving Licence",
-                    "Driving License",
+                    "Driving Licence (Yes/No)",
+                    "Driving License (Yes/No)",
+                ]),
+
+                // Driving Licence type and number.
+                getCellValue(row, headers, [
+                    "Driving Licence If Yes then mention the Type of D/L and D/L Number",
+                    "Driving License If Yes then mention the Type of D/L and D/L Number",
+                    "Driving Licence Details",
+                    "Driving License Details",
                 ]),
 
                 getCellValue(row, headers, [
                     "Computer Knowledge",
+                    "Computer Knowledge, if Any mention",
                     "Knowledge of Computer",
                 ]),
 
@@ -436,10 +428,15 @@ const uploadPersonnelExcel = async (req, res, next) => {
                     "Phone No",
                 ]),
 
-                getCellValue(row, headers, ["Remarks"]),
+                getCellValue(row, headers, [
+                    "Remarks",
+                ]),
 
-                // Preserve the old Excel Leave column as legacy text.
-                getCellValue(row, headers, ["Leave", "Leave Details"]),
+                // Preserve legacy Excel Leave text.
+                getCellValue(row, headers, [
+                    "Leave",
+                    "Leave Details",
+                ]),
             ];
 
             await connection.execute(insertQuery, values);
@@ -449,6 +446,7 @@ const uploadPersonnelExcel = async (req, res, next) => {
 
         if (importedRows === 0) {
             await connection.rollback();
+            transactionStarted = false;
 
             return res.status(400).json({
                 success: false,
@@ -458,6 +456,10 @@ const uploadPersonnelExcel = async (req, res, next) => {
         }
 
         await connection.commit();
+        transactionStarted = false;
+
+        // Keep the Excel file only after successful import.
+        importSucceeded = true;
 
         return res.status(200).json({
             success: true,
@@ -468,11 +470,37 @@ const uploadPersonnelExcel = async (req, res, next) => {
                 skippedRows,
             },
         });
+
     } catch (error) {
-        await connection.rollback();
+        if (connection && transactionStarted) {
+            try {
+                await connection.rollback();
+            } catch (rollbackError) {
+                console.error("Excel import rollback failed:", rollbackError);
+            }
+        }
+
         next(error);
+
     } finally {
-        connection.release();
+        if (connection) {
+            connection.release();
+        }
+
+        // Delete uploaded Excel whenever import did not succeed.
+        if (!importSucceeded && req.file?.path) {
+            try {
+                await fs.unlink(req.file.path);
+                console.log("Failed Excel upload deleted:", req.file.path);
+            } catch (deleteError) {
+                if (deleteError.code !== "ENOENT") {
+                    console.error(
+                        "Could not delete failed Excel upload:",
+                        deleteError
+                    );
+                }
+            }
+        }
     }
 };
 

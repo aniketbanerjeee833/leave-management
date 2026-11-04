@@ -84,15 +84,78 @@ const formatDate = (date) => {
         return date.slice(0, 10);
     }
 
-    return date.toISOString().slice(0, 10);
+    // Avoid timezone conversion
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+
+    return `${year}-${month}-${day}`;
 };
 
+// const validateLeaveData = ({
+//     personnel_id,
+//     from_date,
+//     to_date,
+//     from_time,
+//     to_time,
+//     remarks,
+// }) => {
+//     if (!personnel_id || !Number.isInteger(Number(personnel_id))) {
+//         return "Valid personnel ID is required.";
+//     }
+
+//     if (!isValidDate(from_date)) {
+//         return "Valid from date is required in YYYY-MM-DD format.";
+//     }
+
+//     if (!isValidDate(to_date)) {
+//         return "Valid to date is required in YYYY-MM-DD format.";
+//     }
+
+//     if (to_date < from_date) {
+//         return "To date cannot be earlier than from date.";
+//     }
+
+//     if ((from_time && !to_time) || (!from_time && to_time)) {
+//         return "Both from time and to time are required.";
+//     }
+
+//     if (from_time && to_time) {
+//         if (
+//             !/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/.test(from_time) ||
+//             !/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/.test(to_time)
+//         ) {
+//             return "Invalid time format.";
+//         }
+
+//         if (from_date === to_date && to_time <= from_time) {
+//             return "To time must be later than from time.";
+//         }
+//     }
+
+//     if (!remarks || !remarks.trim()) {
+//         return "Leave remarks are required.";
+//     }
+
+//     if (remarks.trim().length > 255) {
+//         return "Remarks cannot exceed 255 characters.";
+//     }
+
+//     return null;
+// };
+// ==================================================
+// PERSONNEL CONTROLLERS
+// ==================================================
+
+// --------------------------------------------------
+// GET ALL PERSONNEL - CURSOR PAGINATION
+// --------------------------------------------------
 const validateLeaveData = ({
     personnel_id,
     from_date,
     to_date,
-    from_time,
-    to_time,
+    from_time_period,
+    to_time_period,
     remarks,
 }) => {
     if (!personnel_id || !Number.isInteger(Number(personnel_id))) {
@@ -111,21 +174,12 @@ const validateLeaveData = ({
         return "To date cannot be earlier than from date.";
     }
 
-    if ((from_time && !to_time) || (!from_time && to_time)) {
-        return "Both from time and to time are required.";
+    if (!["AM", "PM"].includes(from_time_period)) {
+        return "From period must be AM or PM.";
     }
 
-    if (from_time && to_time) {
-        if (
-            !/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/.test(from_time) ||
-            !/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/.test(to_time)
-        ) {
-            return "Invalid time format.";
-        }
-
-        if (from_date === to_date && to_time <= from_time) {
-            return "To time must be later than from time.";
-        }
+    if (!["AM", "PM"].includes(to_time_period)) {
+        return "To period must be AM or PM.";
     }
 
     if (!remarks || !remarks.trim()) {
@@ -138,13 +192,6 @@ const validateLeaveData = ({
 
     return null;
 };
-// ==================================================
-// PERSONNEL CONTROLLERS
-// ==================================================
-
-// --------------------------------------------------
-// GET ALL PERSONNEL - CURSOR PAGINATION
-// --------------------------------------------------
 
 const getAllPersonnel = async (req, res, next) => {
     try {
@@ -152,43 +199,50 @@ const getAllPersonnel = async (req, res, next) => {
             search = "",
             district = "",
             recruited_unit = "",
-            is_active,
+            from_date,
+            to_date,
             cursor,
         } = req.query;
 
-        // Validate and limit page size
+        // Page size: default 20, maximum 100
         const limit = Math.min(
             Math.max(parseInt(req.query.limit, 10) || 20, 1),
             100
         );
 
         // -----------------------------------------
-        // 1. Build common filters
+        // 1. Build filters
         // -----------------------------------------
 
         const conditions = [];
         const values = [];
 
-        // Search filter
-        if (search.trim()) {
-            conditions.push(`
-                (
-                    name LIKE ?
-                    OR wbp_id LIKE ?
-                    OR pts_chest_no LIKE ?
-                    OR home_district LIKE ?
-                )
-            `);
+        // Search by name, WBP ID, PTS Chest No or district
+       
+// recruited unit, or mobile number
+if (search.trim()) {
+    conditions.push(`
+        (
+            name LIKE ?
+            OR wbp_id LIKE ?
+            OR pts_chest_no LIKE ?
+            OR home_district LIKE ?
+            OR recruited_unit LIKE ?
+            OR mobile_no LIKE ?
+        )
+    `);
 
-            const searchValue = `%${search.trim()}%`;
+    const searchValue = `%${search.trim()}%`;
 
-            values.push(
-                searchValue,
-                searchValue,
-                searchValue,
-                searchValue
-            );
-        }
+    values.push(
+        searchValue,
+        searchValue,
+        searchValue,
+        searchValue,
+        searchValue,
+        searchValue
+    );
+}
 
         // District filter
         if (district.trim()) {
@@ -202,17 +256,40 @@ const getAllPersonnel = async (req, res, next) => {
             values.push(recruited_unit.trim());
         }
 
-        // Active status filter
-        if (is_active !== undefined && is_active !== "") {
-            if (!["0", "1"].includes(String(is_active))) {
+        // -----------------------------------------
+        // Leave date range filter
+        // -----------------------------------------
+
+        if (from_date || to_date) {
+            if (!from_date || !to_date) {
                 return res.status(400).json({
                     success: false,
-                    message: "Invalid is_active value.",
+                    message: "Both from_date and to_date are required.",
                 });
             }
 
-            conditions.push("is_active = ?");
-            values.push(Number(is_active));
+            if (
+                !isValidDate(from_date) ||
+                !isValidDate(to_date) ||
+                from_date > to_date
+            ) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Invalid leave date range.",
+                });
+            }
+
+            conditions.push(`
+                EXISTS (
+                    SELECT 1
+                    FROM personnel_leaves pl
+                    WHERE pl.personnel_id = personnel.personnel_id
+                      AND pl.from_date <= ?
+                      AND pl.to_date >= ?
+                )
+            `);
+
+            values.push(to_date, from_date);
         }
 
         const whereClause = conditions.length
@@ -222,8 +299,6 @@ const getAllPersonnel = async (req, res, next) => {
         // -----------------------------------------
         // 2. Get total matching personnel count
         // -----------------------------------------
-        // Do not include cursor condition here.
-        // This keeps total constant across pages.
 
         const countQuery = `
             SELECT COUNT(*) AS total
@@ -233,13 +308,13 @@ const getAllPersonnel = async (req, res, next) => {
 
         const [countRows] = await pool.execute(
             countQuery,
-            [...values]
+            values
         );
 
         const total = Number(countRows[0].total);
 
         // -----------------------------------------
-        // 3. Build cursor condition
+        // 3. Cursor pagination
         // -----------------------------------------
 
         const paginationConditions = [...conditions];
@@ -259,7 +334,10 @@ const getAllPersonnel = async (req, res, next) => {
                 });
             }
 
-            paginationConditions.push("personnel_id < ?");
+            // ASCENDING order:
+            // Fetch personnel IDs greater than the previous cursor
+            paginationConditions.push("personnel_id > ?");
+
             paginationValues.push(
                 Number(decodedCursor.personnel_id)
             );
@@ -270,7 +348,7 @@ const getAllPersonnel = async (req, res, next) => {
             : "";
 
         // -----------------------------------------
-        // 4. Fetch personnel records
+        // 4. Fetch personnel
         // -----------------------------------------
 
         const query = `
@@ -297,17 +375,17 @@ const getAllPersonnel = async (req, res, next) => {
                 caste,
                 exempted_category,
                 driving_licence,
+                driving_licence_details,
                 computer_knowledge,
                 extracurricular_activities,
                 mobile_no,
                 remarks,
                 legacy_leave_details,
-                is_active,
                 created_at,
                 updated_at
             FROM personnel
             ${paginationWhereClause}
-            ORDER BY personnel_id DESC
+            ORDER BY personnel_id ASC
             LIMIT ?
         `;
 
@@ -320,12 +398,11 @@ const getAllPersonnel = async (req, res, next) => {
         );
 
         // -----------------------------------------
-        // 5. Determine next page
+        // 5. Determine pagination
         // -----------------------------------------
 
         const hasMore = rows.length > limit;
 
-        // Return only the requested number of records
         const data = hasMore
             ? rows.slice(0, limit)
             : rows;
@@ -359,6 +436,7 @@ const getAllPersonnel = async (req, res, next) => {
         next(error);
     }
 };
+
 
 // --------------------------------------------------
 // GET SINGLE PERSONNEL
@@ -450,7 +528,6 @@ const updatePersonnel = async (req, res, next) => {
             mobile_no,
             remarks,
             legacy_leave_details,
-            is_active,
         } = req.body;
 
         if (!name || !String(name).trim()) {
@@ -474,14 +551,6 @@ const updatePersonnel = async (req, res, next) => {
             }
 
             formattedDob = dob;
-        }
-
-        // Validate active status
-        if (![0, 1, "0", "1"].includes(is_active)) {
-            return res.status(400).json({
-                success: false,
-                message: "is_active must be 0 or 1.",
-            });
         }
 
         // Validate serial number
@@ -545,8 +614,7 @@ const updatePersonnel = async (req, res, next) => {
                 extracurricular_activities = ?,
                 mobile_no = ?,
                 remarks = ?,
-                legacy_leave_details = ?,
-                is_active = ?
+                legacy_leave_details = ?
             WHERE personnel_id = ?
         `;
 
@@ -577,7 +645,6 @@ const updatePersonnel = async (req, res, next) => {
             mobile_no || null,
             remarks || null,
             legacy_leave_details || null,
-            Number(is_active),
             personnel_id,
         ]);
 
@@ -643,39 +710,38 @@ const getAllLeaves = async (req, res, next) => {
             );
         }
 
-        // District
+        // District filter
         if (district.trim()) {
             conditions.push("p.home_district = ?");
             values.push(district.trim());
         }
 
-        // Recruited unit
+        // Recruited unit filter
         if (recruited_unit.trim()) {
             conditions.push("p.recruited_unit = ?");
             values.push(recruited_unit.trim());
         }
 
-        // Personnel ID
-       // Personnel ID filter
-if (
-    personnel_id !== undefined &&
-    personnel_id !== null &&
-    String(personnel_id).trim() !== ""
-) {
-    const parsedPersonnelId = String(personnel_id).trim();
+        // Personnel ID filter
+        if (
+            personnel_id !== undefined &&
+            personnel_id !== null &&
+            String(personnel_id).trim() !== ""
+        ) {
+            const parsedPersonnelId = String(personnel_id).trim();
 
-    if (!/^[1-9]\d*$/.test(parsedPersonnelId)) {
-        return res.status(400).json({
-            success: false,
-            message: "Invalid personnel ID.",
-        });
-    }
+            if (!/^[1-9]\d*$/.test(parsedPersonnelId)) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Invalid personnel ID.",
+                });
+            }
 
-    conditions.push("pl.personnel_id = ?");
-    values.push(Number(parsedPersonnelId));
-}
+            conditions.push("pl.personnel_id = ?");
+            values.push(Number(parsedPersonnelId));
+        }
 
-        // Date range: overlapping leave records
+        // From date filter
         if (from_date) {
             if (!isValidDate(from_date)) {
                 return res.status(400).json({
@@ -688,6 +754,7 @@ if (
             values.push(from_date);
         }
 
+        // To date filter
         if (to_date) {
             if (!isValidDate(to_date)) {
                 return res.status(400).json({
@@ -700,13 +767,13 @@ if (
             values.push(to_date);
         }
 
-        // Remarks
+        // Remarks filter
         if (remarks.trim()) {
             conditions.push("pl.remarks LIKE ?");
             values.push(`%${remarks.trim()}%`);
         }
 
-        // Cursor
+        // Cursor pagination
         if (cursor) {
             const decodedCursor = decodeLeaveCursor(cursor);
 
@@ -742,10 +809,10 @@ if (
             SELECT
                 pl.leave_id,
                 pl.personnel_id,
-                pl.from_date,
-                pl.to_date,
-                pl.from_time,
-                pl.to_time,
+                DATE_FORMAT(pl.from_date, '%Y-%m-%d') AS from_date,
+                DATE_FORMAT(pl.to_date, '%Y-%m-%d') AS to_date,
+                pl.from_time_period,
+                pl.to_time_period,
                 pl.remarks,
                 pl.created_at,
                 pl.updated_at,
@@ -776,7 +843,10 @@ if (
         const [rows] = await pool.execute(query, values);
 
         const hasMore = rows.length > limit;
-        const data = hasMore ? rows.slice(0, limit) : rows;
+
+        const data = hasMore
+            ? rows.slice(0, limit)
+            : rows;
 
         let nextCursor = null;
 
@@ -808,6 +878,68 @@ if (
 // GET SINGLE LEAVE
 // --------------------------------------------------
 
+// const getLeaveById = async (req, res, next) => {
+//     try {
+//         const { leave_id } = req.params;
+
+//         if (
+//             !Number.isInteger(Number(leave_id)) ||
+//             Number(leave_id) <= 0
+//         ) {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: "Invalid leave ID.",
+//             });
+//         }
+
+//         const [rows] = await pool.execute(
+//     `
+//         SELECT
+//             pl.leave_id,
+//             pl.personnel_id,
+//             DATE_FORMAT(pl.from_date, '%Y-%m-%d') AS from_date,
+//             DATE_FORMAT(pl.to_date, '%Y-%m-%d') AS to_date,
+//             pl.from_time,
+//             pl.to_time,
+//             pl.remarks,
+//             pl.created_at,
+//             pl.updated_at,
+
+//             p.serial_no,
+//             p.pts_chest_no,
+//             p.wbp_id,
+//             p.name,
+//             p.home_district,
+//             p.recruited_unit
+
+//         FROM personnel_leaves pl
+
+//         INNER JOIN personnel p
+//             ON p.personnel_id = pl.personnel_id
+
+//         WHERE pl.leave_id = ?
+
+//         LIMIT 1
+//     `,
+//     [leave_id]
+// );
+
+//         if (!rows.length) {
+//             return res.status(404).json({
+//                 success: false,
+//                 message: "Leave record not found.",
+//             });
+//         }
+
+//         return res.status(200).json({
+//             success: true,
+//             data: rows[0],
+//         });
+
+//     } catch (error) {
+//         next(error);
+//     }
+// };
 const getLeaveById = async (req, res, next) => {
     try {
         const { leave_id } = req.params;
@@ -825,7 +957,16 @@ const getLeaveById = async (req, res, next) => {
         const [rows] = await pool.execute(
             `
                 SELECT
-                    pl.*,
+                    pl.leave_id,
+                    pl.personnel_id,
+                    DATE_FORMAT(pl.from_date, '%Y-%m-%d') AS from_date,
+                    DATE_FORMAT(pl.to_date, '%Y-%m-%d') AS to_date,
+                    pl.from_time_period,
+                    pl.to_time_period,
+                    pl.remarks,
+                    pl.created_at,
+                    pl.updated_at,
+
                     p.serial_no,
                     p.pts_chest_no,
                     p.wbp_id,
@@ -866,14 +1007,94 @@ const getLeaveById = async (req, res, next) => {
 // ADD LEAVE
 // --------------------------------------------------
 
+// const addLeave = async (req, res, next) => {
+//     try {
+//         const {
+//             personnel_id,
+//             from_date,
+//             to_date,
+//             from_time,
+//             to_time,
+//             remarks,
+//         } = req.body;
+
+//         const validationError = validateLeaveData({
+//             personnel_id,
+//             from_date,
+//             to_date,
+//             from_time,
+//             to_time,
+//             remarks,
+//         });
+
+//         if (validationError) {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: validationError,
+//             });
+//         }
+
+//         // Check personnel exists
+//         const [personnel] = await pool.execute(
+//             `
+//                 SELECT personnel_id
+//                 FROM personnel
+//                 WHERE personnel_id = ?
+//                 LIMIT 1
+//             `,
+//             [personnel_id]
+//         );
+
+//         if (!personnel.length) {
+//             return res.status(404).json({
+//                 success: false,
+//                 message: "Personnel record not found.",
+//             });
+//         }
+
+//         const [result] = await pool.execute(
+//             `
+//                 INSERT INTO personnel_leaves (
+//                     personnel_id,
+//                     from_date,
+//                     to_date,
+//                     from_time,
+//                     to_time,
+//                     remarks
+//                 )
+//                 VALUES (?, ?, ?, ?, ?, ?)
+//             `,
+//             [
+//                 Number(personnel_id),
+//                 from_date,
+//                 to_date,
+//                 from_time || null,
+//                 to_time || null,
+//                 String(remarks).trim(),
+//             ]
+//         );
+
+//         return res.status(201).json({
+//             success: true,
+//             message: "Leave added successfully.",
+//             data: {
+//                 leave_id: result.insertId,
+//                 personnel_id: Number(personnel_id),
+//             },
+//         });
+
+//     } catch (error) {
+//         next(error);
+//     }
+// };
 const addLeave = async (req, res, next) => {
     try {
         const {
             personnel_id,
             from_date,
             to_date,
-            from_time,
-            to_time,
+            from_time_period,
+            to_time_period,
             remarks,
         } = req.body;
 
@@ -881,8 +1102,8 @@ const addLeave = async (req, res, next) => {
             personnel_id,
             from_date,
             to_date,
-            from_time,
-            to_time,
+            from_time_period,
+            to_time_period,
             remarks,
         });
 
@@ -911,14 +1132,15 @@ const addLeave = async (req, res, next) => {
             });
         }
 
+        // Insert leave
         const [result] = await pool.execute(
             `
                 INSERT INTO personnel_leaves (
                     personnel_id,
                     from_date,
                     to_date,
-                    from_time,
-                    to_time,
+                    from_time_period,
+                    to_time_period,
                     remarks
                 )
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -927,8 +1149,8 @@ const addLeave = async (req, res, next) => {
                 Number(personnel_id),
                 from_date,
                 to_date,
-                from_time || null,
-                to_time || null,
+                from_time_period,
+                to_time_period,
                 String(remarks).trim(),
             ]
         );
@@ -946,11 +1168,121 @@ const addLeave = async (req, res, next) => {
         next(error);
     }
 };
-
 // --------------------------------------------------
 // UPDATE LEAVE
 // --------------------------------------------------
 
+// const updateLeave = async (req, res, next) => {
+//     try {
+//         const { leave_id } = req.params;
+
+//         if (
+//             !Number.isInteger(Number(leave_id)) ||
+//             Number(leave_id) <= 0
+//         ) {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: "Invalid leave ID.",
+//             });
+//         }
+
+//         const {
+//             personnel_id,
+//             from_date,
+//             to_date,
+//             from_time,
+//             to_time,
+//             remarks,
+//         } = req.body;
+
+//         const validationError = validateLeaveData({
+//             personnel_id,
+//             from_date,
+//             to_date,
+//             from_time,
+//             to_time,
+//             remarks,
+//         });
+
+//         if (validationError) {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: validationError,
+//             });
+//         }
+
+//         // Check leave exists
+//         const [existingLeave] = await pool.execute(
+//             `
+//                 SELECT leave_id
+//                 FROM personnel_leaves
+//                 WHERE leave_id = ?
+//                 LIMIT 1
+//             `,
+//             [leave_id]
+//         );
+
+//         if (!existingLeave.length) {
+//             return res.status(404).json({
+//                 success: false,
+//                 message: "Leave record not found.",
+//             });
+//         }
+
+//         // Check personnel exists
+//         const [personnel] = await pool.execute(
+//             `
+//                 SELECT personnel_id
+//                 FROM personnel
+//                 WHERE personnel_id = ?
+//                 LIMIT 1
+//             `,
+//             [personnel_id]
+//         );
+
+//         if (!personnel.length) {
+//             return res.status(404).json({
+//                 success: false,
+//                 message: "Personnel record not found.",
+//             });
+//         }
+
+//         const [result] = await pool.execute(
+//             `
+//                 UPDATE personnel_leaves
+//                 SET
+//                     personnel_id = ?,
+//                     from_date = ?,
+//                     to_date = ?,
+//                     from_time = ?,
+//                     to_time = ?,
+//                     remarks = ?
+//                 WHERE leave_id = ?
+//             `,
+//             [
+//                 Number(personnel_id),
+//                 from_date,
+//                 to_date,
+//                 from_time || null,
+//                 to_time || null,
+//                 String(remarks).trim(),
+//                 leave_id,
+//             ]
+//         );
+
+//         return res.status(200).json({
+//             success: true,
+//             message: "Leave updated successfully.",
+//             data: {
+//                 leave_id: Number(leave_id),
+//                 affectedRows: result.affectedRows,
+//             },
+//         });
+
+//     } catch (error) {
+//         next(error);
+//     }
+// };
 const updateLeave = async (req, res, next) => {
     try {
         const { leave_id } = req.params;
@@ -969,8 +1301,8 @@ const updateLeave = async (req, res, next) => {
             personnel_id,
             from_date,
             to_date,
-            from_time,
-            to_time,
+            from_time_period,
+            to_time_period,
             remarks,
         } = req.body;
 
@@ -978,8 +1310,8 @@ const updateLeave = async (req, res, next) => {
             personnel_id,
             from_date,
             to_date,
-            from_time,
-            to_time,
+            from_time_period,
+            to_time_period,
             remarks,
         });
 
@@ -1026,6 +1358,7 @@ const updateLeave = async (req, res, next) => {
             });
         }
 
+        // Update leave
         const [result] = await pool.execute(
             `
                 UPDATE personnel_leaves
@@ -1033,8 +1366,8 @@ const updateLeave = async (req, res, next) => {
                     personnel_id = ?,
                     from_date = ?,
                     to_date = ?,
-                    from_time = ?,
-                    to_time = ?,
+                    from_time_period = ?,
+                    to_time_period = ?,
                     remarks = ?
                 WHERE leave_id = ?
             `,
@@ -1042,8 +1375,8 @@ const updateLeave = async (req, res, next) => {
                 Number(personnel_id),
                 from_date,
                 to_date,
-                from_time || null,
-                to_time || null,
+                from_time_period,
+                to_time_period,
                 String(remarks).trim(),
                 leave_id,
             ]
@@ -1062,7 +1395,6 @@ const updateLeave = async (req, res, next) => {
         next(error);
     }
 };
-
 // --------------------------------------------------
 // DELETE LEAVE
 // --------------------------------------------------

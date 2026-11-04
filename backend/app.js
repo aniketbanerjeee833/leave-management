@@ -1,22 +1,20 @@
 
 // import errorHandler from "./middleware/errorHandler.js";
- import userRoutes from "./routes/userRoutes.js";
+
  import adminRoutes from "./routes/admin/adminRoutes.js"
- import qrRoutes from "./routes/admin/qrRoutes.js"
-  import profileRoutes from "./routes/profileRoutes.js"
-  import productRoutes from "./routes/admin/productRoutes.js"
-  import shopRoutes from "./routes/shopRoutes.js"
-  import shippingAndPurchaseRoutes from "./routes/admin/shippingAndPurchaseRoutes.js"
-  import homeRoutes from "./routes/admin/homeRoutes.js"
-  import  registeredMembersRoutes from "./routes/admin/registeredMembersRoutes.js"
+
+  
+
+
  import uploadRoutes from "./routes/admin/uploadRoutes.js"
 import personnelRoutes from "./routes/admin/personnelRoutes.js"
+import dashboardRoutes from "./routes/admin/dashboardRoutes.js"
 
 
 import express from "express";
 
 import cors from "cors";
-// import helmet from "helmet";  
+import helmet from "helmet";  
 import cookieParser from "cookie-parser";
 
 // import { clearExpiredLoginAttempts, clearExpiredSessions } from "./utils/cronJobs.js";
@@ -40,80 +38,72 @@ import clearExpiredSessions from "./utils/clearExpiredSessions.js";
 const app = express();
 app.use(express.json());
 
-// const isProduction=false
+const isProduction=false
 
-// const server = http.createServer(app);
-// export const io = new Server(server, {
-//   cors: {
-//     origin: ["http://localhost:5173", "http://localhost:3000"],
-//     methods: ["GET", "POST", "PATCH"],
-//     credentials: true
-//   }
-// });
 
 // app.use(helmet());
-// if (isProduction) {
-//   console.log("🚀 Running Helmet in PRODUCTION mode with strict CSP");
+if (isProduction) {
+  console.log("🚀 Running Helmet in PRODUCTION mode with strict CSP");
 
-//   app.use(
-//     helmet({
-//       crossOriginResourcePolicy: { policy: "cross-origin" },
-//       crossOriginEmbedderPolicy: false,
-//       contentSecurityPolicy: {
-//         useDefaults: false,
-//         directives: {
-//           defaultSrc: ["'self'"],
-//           scriptSrc: [
-//             "'self'",
-//             "'unsafe-inline'",
-//             "'unsafe-eval'",
-//             "https://cdn.jsdelivr.net",
-//             "https://cdnjs.cloudflare.com",
-//           ],
-//           styleSrc: [
-//             "'self'",
-//             "'unsafe-inline'",
-//             "https://fonts.googleapis.com",
-//             "https://cdn.jsdelivr.net",
-//             "https://cdnjs.cloudflare.com",
-//           ],
-//           fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
-//           imgSrc: [
-//             "'self'",
-//             "data:",
-//             "blob:",
-//             "https://cdn.jsdelivr.net",
-//             "https://cdnjs.cloudflare.com",
-//             "https://ancoinnovation.com",
-//           ],
-//           connectSrc: [
-//             "'self'",
-//             "https://cdn.jsdelivr.net",
-//             "https://ancoinnovation.com",
-//           ],
-//           objectSrc: ["'none'"],
-//           frameAncestors: ["'none'"],
-//           upgradeInsecureRequests: [],
-//         },
-//       },
-//       referrerPolicy: { policy: "strict-origin-when-cross-origin" },
-//       hsts: { maxAge: 63072000, includeSubDomains: true, preload: true },
-//       noSniff: true,
-//     })
-//   );
-// } else {
-//   console.log("🧩 Running Helmet in DEVELOPMENT mode (relaxed CSP)");
+  app.use(
+    helmet({
+      crossOriginResourcePolicy: { policy: "cross-origin" },
+      crossOriginEmbedderPolicy: false,
+      contentSecurityPolicy: {
+        useDefaults: false,
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: [
+            "'self'",
+            "'unsafe-inline'",
+            "'unsafe-eval'",
+            "https://cdn.jsdelivr.net",
+            "https://cdnjs.cloudflare.com",
+          ],
+          styleSrc: [
+            "'self'",
+            "'unsafe-inline'",
+            "https://fonts.googleapis.com",
+            "https://cdn.jsdelivr.net",
+            "https://cdnjs.cloudflare.com",
+          ],
+          fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
+          imgSrc: [
+            "'self'",
+            "data:",
+            "blob:",
+            "https://cdn.jsdelivr.net",
+            "https://cdnjs.cloudflare.com",
+            "https://ancoinnovation.com",
+          ],
+          connectSrc: [
+            "'self'",
+            "https://cdn.jsdelivr.net",
+            "https://ancoinnovation.com",
+          ],
+          objectSrc: ["'none'"],
+          frameAncestors: ["'none'"],
+          upgradeInsecureRequests: [],
+        },
+      },
+      referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+      hsts: { maxAge: 63072000, includeSubDomains: true, preload: true },
+      noSniff: true,
+    })
+  );
+} else {
+  console.log("🧩 Running Helmet in DEVELOPMENT mode (relaxed CSP)");
 
-//   // More permissive CSP for Vite dev
-//   app.use(
-//     helmet({
-//       contentSecurityPolicy: false, // disable CSP locally
-//       crossOriginResourcePolicy: { policy: "cross-origin" },
-//       crossOriginEmbedderPolicy: false,
-//       noSniff: true,
-//     })
-//   );
-// }
+  // More permissive CSP for Vite dev
+  app.use(
+    helmet({
+      contentSecurityPolicy: false, // disable CSP locally
+      crossOriginResourcePolicy: { policy: "cross-origin" },
+      crossOriginEmbedderPolicy: false,
+      noSniff: true,
+    })
+  );
+}
 app.use(cookieParser());
 // app.use(cors({
 //   origin: process.env.CLIENT_URL, // allow requests from 'http://localhost:5173','http://localhost:5174'
@@ -161,26 +151,22 @@ const __dirname = path.dirname(__filename);
 // app.use("/public", express.static(path.join(process.cwd(), "public")));
 
 
- app.use("/api/user",userRoutes)
-  app.use("/api/user/shop",shopRoutes)
- app.use("/api/admin",adminRoutes)
- app.use("/api",homeRoutes)
- app.use("/api/admin/qr",qrRoutes)
- app.use("/api/admin/product",productRoutes)
- app.use("/api/admin/shippingAndPurchase",shippingAndPurchaseRoutes)
- app.use("/api/admin/registered-members",registeredMembersRoutes)
 
- app.use("/api/user/profile",profileRoutes)
+ app.use("/api/admin",adminRoutes)
+
+
+
  
 app.use("/api/admin/upload", uploadRoutes);
 
 app.use("/api/admin/personnel", personnelRoutes);
+app.use("/api/admin/dashboard", dashboardRoutes);
 
 
 //clearExpiredSessions();
 //app.use(errorHandler)
 const PORT = process.env.PORT || 4000;
-// clearExpiredSessions();
+ clearExpiredSessions();
 // clearExpiredLoginAttempts();
 // dailyStockCarryForward();
 //  clearExpiredQr()
