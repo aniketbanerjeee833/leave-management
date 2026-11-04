@@ -1,518 +1,305 @@
 
-
-import "./Login.css"
 import { useEffect, useState } from "react";
-
-
-
 import { useForm } from "react-hook-form";
-
-//import {loginSchema} from "../../../schema/userFormSchema"
-import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Button } from "@/components/ui/button";
-import { NavLink } from "react-router-dom";
-import { Lock, User } from "lucide-react";
+import { User, Lock, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import { toast } from "react-toastify";
+
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { useAdminLoginMutation } from "@/redux/api/userApi";
 
-
 export default function Login() {
-//const dispatch = useDispatch();
-//const navigate = useNavigate();
-  // const [username, setUsername] = useState('');
-  // const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  //const[loggedInLoading, setLoggedInLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [blockedUntil, setBlockedUntil] = useState(null); // timestamp until which login is blocked
- //const {  loggedIn } = useSelector((state) => state.user);
-const [countdownLeft, setCountdownLeft] = useState(0);
-const[duplicateLoginError,setDuplicateLoginError]=useState("");
+  const [blockedUntil, setBlockedUntil] = useState(null);
+  const [countdownLeft, setCountdownLeft] = useState(0);
+  const [duplicateLoginError, setDuplicateLoginError] = useState("");
 
-
- const [loginUser, { isLoading: isAdminLoginLoading }] = useAdminLoginMutation();
-
-
-const[blockedUntilReadable, setBlockedUntilReadable] = useState(null);
-//const [error, setError] = useState("");
+  const [loginUser, { isLoading: isAdminLoginLoading }] =
+    useAdminLoginMutation();
 
   const {
-    
-      register,
-      handleSubmit,
+    register,
+    handleSubmit,
+  } = useForm();
 
-      watch,
-      
-      //formState: { errors },
-    } = useForm()
+  // Restore login block after page refresh
+  useEffect(() => {
+    const saved = localStorage.getItem("blockedUntil");
 
-const formValues = watch();
-// const onSubmit = (data) => {
-//   console.log("Form submitted with:", data);
+    if (saved && Number(saved) > Date.now()) {
+      setBlockedUntil(Number(saved));
+    } else {
+      localStorage.removeItem("blockedUntil");
+    }
+  }, []);
 
-//   if (data.username === "Admin1" && data.password === "Admin@123") {
-//     //window.location.href = "/dashboard";
-//     navigate("/dashboard"); 
-//   } else {
-//     toast.error("Invalid username or password");
-//   }
+  // Store blocked time
+  useEffect(() => {
+    if (blockedUntil) {
+      localStorage.setItem("blockedUntil", blockedUntil);
+    } else {
+      localStorage.removeItem("blockedUntil");
+    }
+  }, [blockedUntil]);
 
-
- 
-
-
-// }
-const onSubmit = async (data) => {
- 
-  setError("");
-  const { username, password } = data;
-  console.log("Logging in with:", { username, password });
-
-  try {
-    const response = await loginUser({ username, password }).unwrap();
-    console.log("Login Response:", response);
-    
-if (response.success) {
-  toast.success("Login successful");
-
-  // dispatch(setUser(response?.user));
-  // dispatch(setUserId(response?.user?.User_Id)); 
-
-  //const role = response?.user?.role;
-
-  
-
-    // default route for admin or others
-    window.location.href = "/dashboard";
- 
-}
-
-  } catch (err) {
-    console.error("Login error:", err);
-
-    // 🔒 1️⃣ Rate limit (too many attempts)
-    if (err.status === 429 && err.data?.blockedUntil) {
-      const blockedTime = err.data.blockedUntil;
-      setBlockedUntil(blockedTime);
-      setBlockedUntilReadable(err.data.blockedUntilReadable);
-
-      const localTime = new Date(blockedTime).toLocaleTimeString("en-IN", {
-        hour: "2-digit",
-        minute: "2-digit",
-        timeZone: "Asia/Kolkata",
-      });
-
-      toast.error(
-        `Too many login attempts. Please try again at ${localTime} (in about ${Math.ceil(
-          (blockedTime - Date.now()) / 60000
-        )} minutes).`
-      );
+  // Login block countdown
+  useEffect(() => {
+    if (!blockedUntil) {
+      setCountdownLeft(0);
+      return;
     }
 
-    // 🚫 2️⃣ Already logged in on another device
-    else if (err.status === 403) {
-      toast.error(
-        "You are already logged in on another device. Please log out from that device first.",
-        { duration: 6000 }
+    const updateCountdown = () => {
+      const remaining = Math.max(
+        0,
+        Math.ceil((blockedUntil - Date.now()) / 1000)
       );
 
-      // 🧠 Optional: show a clear visual warning near the form
-      setDuplicateLoginError(
-        "You’re already logged in on another device. Please log out there or wait until your session expires."
-      );
+      setCountdownLeft(remaining);
 
-      // Optionally, open a dialog to explain or refresh session
-      // setShowLogoutDialog(true);
+      if (remaining <= 0) {
+        setBlockedUntil(null);
+      }
+    };
+
+    updateCountdown();
+
+    const timer = setInterval(updateCountdown, 1000);
+
+    return () => clearInterval(timer);
+  }, [blockedUntil]);
+
+  const localTime =
+    blockedUntil && blockedUntil > Date.now()
+      ? new Date(blockedUntil).toLocaleTimeString("en-IN", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          timeZone: "Asia/Kolkata",
+        })
+      : null;
+
+  // Login submit
+  const onSubmit = async (data) => {
+    setDuplicateLoginError("");
+
+    try {
+      const response = await loginUser({
+        username: data.username,
+        password: data.password,
+      }).unwrap();
+
+      if (response?.success) {
+        toast.success("Login successful");
+
+        // Redirect using href
+        window.location.href = "/dashboard";
+      }
+    } catch (err) {
+      console.error("Login error:", err);
+
+      // Too many login attempts
+      if (err?.status === 429 && err?.data?.blockedUntil) {
+        const blockedTime = new Date(err.data.blockedUntil).getTime();
+
+        setBlockedUntil(blockedTime);
+
+        const readableTime = new Date(blockedTime).toLocaleTimeString(
+          "en-IN",
+          {
+            hour: "2-digit",
+            minute: "2-digit",
+            timeZone: "Asia/Kolkata",
+          }
+        );
+
+        toast.error(
+          `Too many login attempts. Please try again at ${readableTime}.`
+        );
+      }
+
+      // Already logged in on another device
+      else if (err?.status === 403) {
+        const message =
+          "You are already logged in on another device. Please log out there or wait until your session expires.";
+
+        toast.error(message);
+        setDuplicateLoginError(message);
+      }
+
+      // Other errors
+      else {
+        toast.error(
+          err?.data?.message || "Something went wrong. Please try again."
+        );
+      }
     }
+  };
 
-    // ⚠️ 3️⃣ General error handler
-    else {
-      toast.error(err?.data?.message || "Something went wrong. Please try again.");
-      setError(err.data?.message || "Something went wrong");
-    }
-  }
-};
-
-
-
-
-
-
-// const timeLeft =
-//   blockedUntil && blockedUntil > Date.now()
-//     ? Math.ceil((blockedUntil - Date.now()) / 1000)
-//     : 0;
-
-// 🕐 Countdown timer state (re-renders every second)
-useEffect(() => {
-  const saved = localStorage.getItem("blockedUntil");
-  if (saved && Number(saved) > Date.now()) {
-    setBlockedUntil(Number(saved));
-  }
-}, []);
-
-// 🧠 Save blockedUntil whenever it changes
-useEffect(() => {
-  if (blockedUntil) {
-    localStorage.setItem("blockedUntil", blockedUntil);
-  } else {
-    localStorage.removeItem("blockedUntil");
-  }
-}, [blockedUntil]);
-
-// 🕐 Countdown updater (ticks every second)
-useEffect(() => {
-  if (!blockedUntil) return;
-
-  const timer = setInterval(() => {
-    const remaining = Math.max(0, Math.ceil((blockedUntil - Date.now()) / 1000));
-    setCountdownLeft(remaining);
-
-    if (remaining <= 0) {
-      clearInterval(timer);
-      setBlockedUntil(null);
-    }
-  }, 1000);
-
-  return () => clearInterval(timer);
-}, [blockedUntil]);
-
-// 🕓 Convert to readable local time (India)
-const localTime =
-  blockedUntil && blockedUntil > Date.now()
-    ? new Date(blockedUntil).toLocaleTimeString("en-IN", {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        timeZone: "Asia/Kolkata",
-      })
-    : null;
-
-    console.log(formValues);
   return (
-  <div  className="min-h-screen bg-slate-100 flex items-center justify-center ">
-    <div 
-    className="grid grid-cols-1 w-full min-h-screen
-    bg-white  border border-gray-200 sm:grid-cols-12 shadow-sm">
+    <div className="fixed inset-0 h-dvh w-full overflow-hidden bg-white">
+      <div className="grid h-full w-full grid-cols-1 sm:grid-cols-12">
 
-      {/* ── Left panel ── */}
-       {/* <div className="bg-slate-900 col-span-7 flex flex-col items-center justify-center px-9 py-12 gap-5"> */}
-     <div className="hidden sm:flex sm:col-span-7 bg-slate-900 flex-col items-center justify-center
-      px-9 py-12 gap-5">
-        {/* <div className="w-32 h-32
-         rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center"> */}
-         <h2 className="text-2xl font-bold text-white">TRAINING</h2>
-          {/* <img src="/assets/images/logo-tagway-new.png" alt="Logo" className="w-32 h-32 object-contain" /> */}
-        {/* </div> */}
-        {/* <div className="text-center">
-          <p className="text-slate-100 text-lg font-medium">Kitchen Manager</p>
-          <p className="text-slate-400 text-sm mt-1 leading-relaxed">
-            Manage · Monitor · Master<br />Your Kitchen
-          </p>
+        {/* LEFT PANEL - FULL POLICE TRAINING PHOTO */}
+        <div className="relative hidden h-full overflow-hidden sm:col-span-6 sm:block">
+          <img
+            src="/assets/images/police-training-left-panel.png"
+            alt="Indian police trainees during training"
+            className="absolute inset-0 h-full w-full object-cover object-center"
+          />
+
+          {/* Subtle overlay for a professional appearance */}
+          <div className="absolute inset-0 bg-gradient-to-t from-green-950/25 via-transparent to-red-900/10" />
         </div>
-        <div className="flex flex-col gap-2.5 w-full mt-4">
-          {["Real-time order tracking", "Inventory management", "Analytics & reporting"].map((f) => (
-            <div key={f} className="flex items-center gap-2.5 bg-slate-800 rounded-xl px-3.5 py-2.5">
-              <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0" />
-              <span className="text-slate-300 text-xs">{f}</span>
-            </div>
-          ))}
-        </div> */}
-      </div>
 
-      {/* ── Right panel ── */}
-      <div className="flex flex-col col-span-5 items-center justify-center w-full px-9 py-10">
-        {/* <div className="w-full p-10"> */}
-        <div className="w-full max-w-sm mx-auto p-4 sm:p-6">
-          <div className="flex  flex-col items-center justify-center">
-          <h1 className="text-xl font-semibold text-gray-900">Welcome back</h1>
-          <p className="text-sm text-gray-500 mt-1 mb-7">Sign in to your account</p>
-            </div>
-          <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
-          {/* <form  className="flex flex-col gap-4"> */}
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Username</label>
-              <div className="relative">
-                <User size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                <Input
-                  type="text"
-                  placeholder="Enter username"
-                  {...register("username")}
-                  className="pl-8 h-10 rounded-xl bg-gray-50 border-gray-200 text-sm"
-                  required
-                />
+        {/* RIGHT PANEL - LOGIN */}
+        <div className="col-span-1 flex h-full items-center justify-center overflow-y-auto bg-white px-5 py-5 sm:col-span-6 sm:px-10 lg:px-16">
+
+          <div className="w-full max-w-md">
+
+            {/* Login heading */}
+            <div className="mb-9 text-center">
+              <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-green-50 text-green-800">
+                <ShieldCheck size={30} strokeWidth={1.8} />
               </div>
+
+              <h1 className="text-3xl font-bold tracking-tight text-green-900">
+                Login
+              </h1>
+
+              <p className="mt-2 text-sm text-gray-500">
+                Sign in to access the Police Training portal
+              </p>
+
+              <div className="mx-auto mt-5 h-1 w-16 rounded-full bg-red-600" />
             </div>
 
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Password</label>
-              <div className="relative">
-                <Lock size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                <Input
-                  type={showPassword ? "text" : "password"}
-                  placeholder="Enter password"
-                  {...register("password")}
-                  className="pl-8 h-10 rounded-xl bg-gray-50 border-gray-200 text-sm"
-                  required
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="showPass"
-                checked={showPassword}
-                onCheckedChange={() => setShowPassword(!showPassword)}
-              />
-              <label htmlFor="showPass" className="text-sm text-gray-500 cursor-pointer">
-                Show password
-              </label>
-            </div>
-            {/* <NavLink to="/dashboard" className="text-sm text-indigo-600 hover:underline self-end"> */}
-            {/* <Button
-              type="submit"
-                disabled={isAdminLoginLoading || duplicateLoginError || countdownLeft > 0}
-              //disabled={isLoading}
-              className="w-full h-10 rounded-xl bg-green-600 hover:bg-green-700 text-white text-sm font-medium mt-1"
+            {/* Login form */}
+            <form
+              onSubmit={handleSubmit(onSubmit)}
+              className="flex flex-col gap-5"
             >
-              {isAdminLoginLoading ? "Signing in..." : "Sign in"}
-              {/* {isLoading ? "Signing in..." : "Sign in"} 
-            </Button> */}
-            <div 
-                     className="flex flex-col w-full">
-                       <Button
-                       className="w-full h-10 rounded-xl 
-                       bg-green-600 hover:bg-green-700 text-white text-sm font-medium mt-1"
-                        type="submit"
-                           disabled={isAdminLoginLoading || duplicateLoginError || countdownLeft > 0}
-                          >
+              {/* Username */}
+              <div className="flex flex-col gap-2">
+                <label className="text-sm font-medium text-gray-700">
+                  Username
+                </label>
 
-                              {countdownLeft > 0 ? (
-    <div className="mt-2 mb-2">
-      🔒 Please wait{" "}
-      <strong>
-        {String(Math.floor(countdownLeft / 60)).padStart(2, "0")}m{" "}
-        {String(countdownLeft % 60).padStart(2, "0")}s
-      </strong>
-      <br />
-      <small
-        style={{
-          fontSize: "13px",
-          display: "block",
-          marginTop: "3px",
-          color: "#333",
-        }}
-      >
-        You can try again at{" "}
-        <strong style={{ color: "#000" }}>{localTime}</strong>
-      </small>
-    </div>
-  ) : isAdminLoginLoading ? (
-    "Logging in..."
-  ) : (
-    "Login"
-  )}
-                          
-                          </Button> 
-                        {duplicateLoginError && (
-  <div
-  className="flex"
-    style={{
-      color: "#b91c1c",
-      backgroundColor: "#fee2e2",
-      border: "1px solid #fca5a5",
-      borderRadius: "6px",
-      padding: "8px 12px",
-      marginTop: "10px",
-      fontSize: "14px",
-    }}
-  >
-    ⚠️ {duplicateLoginError}
-  </div>
-)}
-                    </div>
-            {/* </NavLink> */}
-          </form>
-        </div>
+                <div className="relative">
+                  <User
+                    size={18}
+                    className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"
+                  />
 
-        <div className="mt-8 pt-5 border-t border-gray-100 text-center">
-          <p className="text-xs text-gray-400">
-            Designed & developed by{" "}
-            <a href="https://techpromind.com/" className="text-indigo-500 hover:underline">Techpromind</a>
-          </p>
-          <p className="text-xs text-gray-400 mt-1">
-            Support: +91 99036 34360 · Mon–Fri, 11am–6pm
-          </p>
+                  <Input
+                    type="text"
+                    placeholder="Enter your username"
+                    autoComplete="username"
+                    {...register("username")}
+                    required
+                    className="h-12 rounded-xl border-gray-300 bg-gray-50 pl-11 text-sm focus-visible:ring-green-600"
+                  />
+                </div>
+              </div>
+
+              {/* Password */}
+              <div className="flex flex-col gap-2">
+                <label className="text-sm font-medium text-gray-700">
+                  Password
+                </label>
+
+                <div className="relative">
+                  <Lock
+                    size={18}
+                    className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"
+                  />
+
+                  <Input
+                    type={showPassword ? "text" : "password"}
+                    placeholder="Enter your password"
+                    autoComplete="current-password"
+                    {...register("password")}
+                    required
+                    className="h-12 rounded-xl border-gray-300 bg-gray-50 pl-11 pr-12 text-sm focus-visible:ring-green-600"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((prev) => !prev)}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 transition-colors hover:text-green-800"
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                  >
+                    {showPassword ? (
+                      <EyeOff size={19} />
+                    ) : (
+                      <Eye size={19} />
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Login button */}
+              <Button
+                type="submit"
+                disabled={
+                  isAdminLoginLoading ||
+                  Boolean(duplicateLoginError) ||
+                  countdownLeft > 0
+                }
+                className="mt-2 h-12 w-full rounded-xl bg-green-600 text-base font-semibold text-white shadow-sm transition-colors hover:bg-green-900 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {countdownLeft > 0 ? (
+                  <span className="text-sm">
+                    Please wait{" "}
+                    {String(Math.floor(countdownLeft / 60)).padStart(2, "0")}
+                    m{" "}
+                    {String(countdownLeft % 60).padStart(2, "0")}s
+                  </span>
+                ) : isAdminLoginLoading ? (
+                  "Logging in..."
+                ) : (
+                  "Login"
+                )}
+              </Button>
+
+              {/* Blocked login message */}
+              {countdownLeft > 0 && (
+                <p className="text-center text-sm text-red-700">
+                  Too many login attempts. Try again at{" "}
+                  <strong>{localTime}</strong>.
+                </p>
+              )}
+
+              {/* Duplicate login error */}
+              {duplicateLoginError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm leading-relaxed text-red-700">
+                  {duplicateLoginError}
+                </div>
+              )}
+            </form>
+
+            {/* Footer */}
+            <div className="mt-10 border-t border-gray-100 pt-5 text-center">
+              <p className="text-xs text-gray-400">
+                Designed & developed by{" "}
+                <a
+                  href="https://techpromind.com/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium text-green-800 hover:text-red-600 hover:underline"
+                >
+                  Techpromind
+                </a>
+              </p>
+
+              <p className="mt-2 text-xs text-gray-400">
+                Support: +91 99036 34360 · Mon–Fri, 11am–6pm
+              </p>
+            </div>
+
+          </div>
         </div>
       </div>
-
     </div>
-  </div>
-);
+  );
 }
-
-//         <>
-//         <div className="body">
-//       <div className="container">
-//     <div className="image-side">
-//         <img src="/assets/images/bg-login.jpg"  style={{width:"100%", height:"100%"}} alt="Login Illustration" />
-//     </div>
-//     <div className="login-side">
-
-    
-//     <form onSubmit={handleSubmit(onSubmit)} className="login-form">
- 
-//   <div className="flex flex-col mb-3 gap-3 justify-center items-center">
-//   <img src="/assets/images/resturant_biling_logo.png" className="w-50" alt="" />
-//     <h3>Login</h3>
-
-// </div>
-
-//   <div className="mb-3">
-//     <input
-//       type="text"
-//       placeholder="👤 Username"
-//       {...register("username")}
-    
-//       style={{
-//         width: "92%",
-//         padding: "7px",
-//         fontSize: "16px",
-//         borderRadius: "6px",
-//         border: "1px solid #ccc",
-//       }}
-//     />
-//     {errors.username && (
-//       <p className="error-message ">{errors.username.message}</p>
-//     )}
-//   </div>
-
-//   {/* Password */}
-//   <div className="mb-3">
-//     <input
-//       type={showPassword ? "text" : "password"}
-//       placeholder="🔒 Password"
-//       {...register("password")}
-   
-    
-//       style={{
-//         width: "92%",
-//         padding: "7px",
-//         fontSize: "16px",
-//         borderRadius: "6px",
-//         border: "1px solid #ccc",
-//       }}
-//     />
-//         {errors.password && (
-//       <p className="error-message ">{errors.password.message}</p>
-//     )}
-// </div>
-  
-//     <div
-//   style={{
-//     display: "flex",
-//     alignItems: "center", // ✅ keeps checkbox & label perfectly centered vertically
-//     gap: "8px", // ✅ consistent spacing between checkbox & text
-//     marginTop: "8px",
-//     flexWrap: "wrap", // ✅ ensures responsiveness on smaller screens
-//   }}
-// >
-//   <input
-//     type="checkbox"
-//     id="showPassword"
-//     checked={showPassword}
-//     onChange={() => setShowPassword(!showPassword)}
-//     style={{
-//       width: "16px",
-//       height: "16px",
-//       cursor: "pointer",
-//       flexShrink: 0, // ✅ prevents checkbox from shrinking on small screens
-     
-//     }}
-//   />
-//   <label
-//     htmlFor="showPassword"
-//     style={{
-//       position: "relative",
-//     bottom: "6px", // ✅ nudges label down to align with checkbox
-//       fontSize: "14px",
-//       color: "#333",
-//       cursor: "pointer",
-//      // ✅ aligns label perfectly with checkbox
-//       userSelect: "none", // ✅ avoids accidental text selection
-//       lineHeight: "1.5", // ✅ perfect alignment visually
-//     }}
-//   >
-//     Show Password
-//   </label>
-// </div>
-
-
-// <button
-//   type="submit"
-//   disabled={isLoading || duplicateLoginError || countdownLeft > 0}
- 
-//   style={{
-//     backgroundColor: countdownLeft > 0 || isLoading || duplicateLoginError ? "#ccc" : "#ff0000",
-//     color: countdownLeft > 0 || isLoading || duplicateLoginError ? "#444" : "#fff",
-//     cursor: countdownLeft > 0 || isLoading || duplicateLoginError ? "not-allowed" : "pointer",
-//     transition: "all 0.3s ease",
-//   }}
-// >
-//   {countdownLeft > 0 ? (
-//     <>
-//       🔒 Please wait{" "}
-//       <strong>
-//         {String(Math.floor(countdownLeft / 60)).padStart(2, "0")}m{" "}
-//         {String(countdownLeft % 60).padStart(2, "0")}s
-//       </strong>
-//       <br />
-//       <small
-//         style={{
-//           fontSize: "13px",
-//           display: "block",
-//           marginTop: "3px",
-//           color: "#333",
-//         }}
-//       >
-//         You can try again at{" "}
-//         <strong style={{ color: "#000" }}>{localTime}</strong>
-//       </small>
-//     </>
-//   ) : isLoading ? (
-//     "Logging in..."
-//   ) : (
-//     "Login"
-//   )}
-// </button>
-// {duplicateLoginError && (
-//   <div
-//     style={{
-//       color: "#b91c1c",
-//       backgroundColor: "#fee2e2",
-//       border: "1px solid #fca5a5",
-//       borderRadius: "6px",
-//       padding: "8px 12px",
-//       marginTop: "10px",
-//       fontSize: "14px",
-//     }}
-//   >
-//     ⚠️ {duplicateLoginError}
-//   </div>
-// )}
-//    <div className="bottom-text flex justify-center items-center">
-//           <p>Designed & Developed by @ 
-//             <NavLink to="https://techpromind.com/"
-//           className="color: #ff0000"
-//            target="_blank">Techpromind
-//            </NavLink>
-//            </p>
-//         </div>
-
-// </form>
-
-//     </div>
-//     </div>
-//    </div>
-//     </>
